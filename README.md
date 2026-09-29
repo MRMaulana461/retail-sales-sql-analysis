@@ -4,7 +4,7 @@ Analisis data transaksi UK-based online retail (~540.000 baris, periode Des 2010
 
 ## Ringkasan
 
-Menggunakan SQL (CTE, window function, self-join) untuk menganalisis dataset transaksi retail dari toko online UK. Temuan utama: revenue sangat bergantung pada segelintir customer besar (pola Pareto), dan retention rate bulanan hanya ~35% — dua sinyal yang mengarah ke rekomendasi program retensi customer.
+Menggunakan SQL (CTE, window function) untuk menganalisis dataset transaksi retail dari toko online UK. Temuan utama: hampir 19% revenue berasal dari transaksi tanpa CustomerID tercatat (data quality gap), retention rate bulanan hanya ~35%, dan satu produk (WORLD WAR 2 GLIDERS ASSTD DESIGNS) konsisten jadi bestseller lintas bulan — tiga sinyal yang mengarah ke rekomendasi konkret bagi tim bisnis.
 
 ## Dataset
 
@@ -24,19 +24,21 @@ Menggunakan SQL (CTE, window function, self-join) untuk menganalisis dataset tra
 ### 1. Produk apa yang paling laku tiap bulan?
 Menggunakan `GROUP BY` untuk menjumlahkan quantity terjual per produk per bulan.
 
-**Temuan:** [isi produk top di beberapa bulan kunci, misal bulan puncak Nov-Des menjelang liburan]
+**Temuan:** Desember 2010, produk terlaris adalah **WORLD WAR 2 GLIDERS ASSTD DESIGNS** (5.195 unit terjual), diikuti PACK OF 72 RETROSPOT CAKE CASES (4.106) dan WHITE HANGING HEART T-LIGHT HOLDER (3.871).
 
 ### 2. Top 3 produk per bulan (tanpa scroll manual)
 Menggunakan CTE + `ROW_NUMBER() OVER (PARTITION BY bulan ORDER BY total_terjual DESC)` untuk otomatis me-ranking produk per bulan.
 
-**Temuan:** [isi pola musiman yang terlihat, misal produk dekorasi naik tajam di kuartal akhir tahun]
+**Temuan:** **WORLD WAR 2 GLIDERS ASSTD DESIGNS** muncul di jajaran top 3 hampir di setiap bulan yang diamati (Des 2010, Feb, Mar, Apr, Mei, Jul 2011) — bukan sekadar tren musiman sesaat, melainkan produk andalan (bestseller konsisten) sepanjang periode data. Produk lain cenderung silih berganti mengisi posisi top 3 (WHITE HANGING HEART T-LIGHT HOLDER, JUMBO BAG RED RETROSPOT, ASSORTED COLOURS SILK FAN), sementara satu produk ini bertahan.
+
+> **Insight bisnis:** Produk yang konsisten masuk top-seller lintas bulan seperti ini adalah kandidat kuat untuk dijaga ketersediaan stoknya sepanjang tahun (bukan cuma musiman), dan bisa dijadikan produk andalan dalam campaign pemasaran.
 
 ### 3. Siapa customer paling bernilai, dan berapa kontribusinya ke total revenue?
 Menggunakan running total (`SUM() OVER (ORDER BY ...)`) dan grand total (`SUM() OVER ()`) untuk menghitung cumulative percentage — analisis gaya Pareto (80/20).
 
-**Temuan:** [isi: sekitar X% customer menyumbang 80% dari total revenue]
+**Temuan:** Baris teratas hasil query ternyata bukan satu customer spesifik — `CustomerID`-nya kosong (string kosong, bukan NULL, sehingga lolos filter awal), mewakili transaksi tanpa ID customer yang tercatat, dan menyumbang **19.08%** dari total revenue. Customer teridentifikasi dengan revenue tertinggi sebenarnya adalah **CustomerID 18102** (£223.987, 2.24% dari total revenue). Top 10 customer teridentifikasi bersama-sama menyumbang **~33.7%** dari total revenue, dan top 28 menyumbang **~42.4%**.
 
-> **Insight bisnis:** Revenue sangat terkonsentrasi pada sejumlah kecil customer besar. Kehilangan salah satu dari mereka berdampak signifikan terhadap pendapatan — perlu strategi retensi khusus untuk segmen top spender ini (misalnya akun manager dedicated, program loyalty tier tinggi).
+> **Insight bisnis:** Ada dua temuan di sini. Pertama, hampir seperlima revenue berasal dari transaksi yang tidak tercatat ID customer-nya — ini gap data quality yang perlu ditindaklanjuti tim internal (kemungkinan transaksi guest checkout, POS offline, atau bug pencatatan), karena tanpa ID, transaksi ini tidak bisa dianalisis perilakunya atau ditargetkan campaign retensi. Kedua, di antara customer yang teridentifikasi, revenue cukup terkonsentrasi pada beberapa akun besar (top 10 = ~34% revenue) — kemungkinan wholesaler, sesuai konteks dataset. Rekomendasi: (1) investigasi root cause transaksi tanpa CustomerID untuk memperbaiki proses pencatatan data, (2) bangun program retensi khusus untuk segmen top spender yang sudah teridentifikasi.
 
 ### 4. Berapa persen customer yang belanja lagi di bulan berikutnya?
 Menggunakan `LEAD()` untuk melihat bulan pembelian berikutnya per customer, lalu `CASE WHEN` untuk menandai apakah pembelian itu terjadi tepat 1 bulan setelahnya.
@@ -45,19 +47,17 @@ Menggunakan `LEAD()` untuk melihat bulan pembelian berikutnya per customer, lalu
 
 > **Insight bisnis:** Sekitar 2 dari 3 customer tidak melakukan pembelian ulang di bulan berikutnya. Ini mengindikasikan churn bulanan yang tinggi dan menjadi sinyal kuat untuk membangun program retensi — misalnya email reminder otomatis, promosi khusus untuk customer yang sudah lama tidak bertransaksi, atau program loyalty.
 
-### 5. Produk apa yang sering dibeli bersamaan?
-Menggunakan self-join pada `InvoiceNo` yang sama untuk menemukan pasangan produk yang sering muncul dalam transaksi yang sama (market basket analysis sederhana), dibatasi pada produk populer (≥100 transaksi) untuk efisiensi query.
+### 5. Produk apa yang sering dibeli bersamaan? *(scope decision)*
+Query ini menggunakan self-join pada `InvoiceNo` yang sama untuk menemukan pasangan produk yang sering muncul dalam transaksi yang sama (market basket analysis sederhana). Query lengkap tersedia di `queries.sql`, termasuk versi yang sudah dioptimasi dengan indexing dan pembatasan ke produk populer (≥100 transaksi).
 
-**Temuan:** [isi pasangan produk teratas, misal produk dari satu tema/koleksi yang sama]
-
-> **Insight bisnis:** Pasangan produk ini bisa dijadikan dasar strategi bundling atau rekomendasi cross-sell di halaman checkout, berpotensi menaikkan average order value.
+**Catatan:** Pada dataset penuh (~540K baris), self-join ini memakan waktu eksekusi yang signifikan bahkan setelah optimasi. Diputuskan untuk tidak menjalankannya sampai selesai pada iterasi ini, memprioritaskan empat analisis lain yang lebih langsung menjawab pertanyaan bisnis inti. Query tetap didokumentasikan sebagai referensi teknik (self-join) dan potensi pengembangan lanjutan — misalnya dijalankan pada subset data atau dengan constraint tambahan (per kategori produk, per periode tertentu) untuk mempercepat eksekusi.
 
 ## Rekomendasi Bisnis (Ringkasan)
 
-1. **Program retensi customer** — retention rate 35% menunjukkan urgensi untuk investasi di re-engagement (email marketing, loyalty program).
-2. **Fokus pada top spender** — segmen kecil customer bernilai tinggi perlu penanganan khusus mengingat kontribusinya yang besar terhadap revenue.
-3. **Strategi bundling produk** — pasangan produk yang sering dibeli bersamaan bisa dijadikan paket bundle atau rekomendasi cross-sell.
-4. **Perencanaan stok musiman** — pola penjualan bulanan menunjukkan lonjakan di periode tertentu; perencanaan inventori bisa disesuaikan.
+1. **Investigasi transaksi tanpa CustomerID** — hampir 19% revenue berasal dari transaksi tak teridentifikasi customer-nya; perlu ditelusuri root cause-nya di proses input data.
+2. **Program retensi customer** — retention rate 35% menunjukkan urgensi untuk investasi di re-engagement (email marketing, loyalty program).
+3. **Fokus pada top spender teridentifikasi** — segmen customer bernilai tinggi (mis. CustomerID 18102) perlu penanganan khusus mengingat kontribusinya yang besar terhadap revenue.
+4. **Jaga ketersediaan stok produk andalan** — produk seperti WORLD WAR 2 GLIDERS ASSTD DESIGNS konsisten masuk top-seller lintas bulan; prioritaskan stok produk ini dibanding produk musiman.
 
 ## Skill Teknis yang Didemonstrasikan
 
